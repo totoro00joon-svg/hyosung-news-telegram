@@ -12,6 +12,41 @@ from zoneinfo import ZoneInfo
 QUERY = "효성화학 when:2d"
 MAX_ITEMS = 5
 
+CATEGORIES = [
+    (
+        "공시/회사",
+        5,
+        ["공시", "유상증자", "전환사채", "채권", "매각", "인수", "합병", "분할", "소송"],
+        "회사 공식 의사결정이나 재무구조에 직접 연결될 수 있습니다.",
+    ),
+    (
+        "실적/재무",
+        5,
+        ["실적", "영업이익", "순손실", "매출", "부채", "차입", "자금", "재무", "신용등급"],
+        "손익과 재무 안정성에 대한 시장 평가가 바뀔 수 있습니다.",
+    ),
+    (
+        "산업/업황",
+        4,
+        ["화학", "스프레드", "프로판", "pp", "폴리프로필렌", "반도체", "수소", "탄소섬유", "증설"],
+        "화학 업황과 제품 스프레드는 실적 방향을 가늠하는 선행 단서가 됩니다.",
+    ),
+    (
+        "증권/리포트",
+        3,
+        ["목표가", "투자의견", "리포트", "증권", "전망", "컨센서스"],
+        "증권사 시각 변화는 단기 수급과 기대치에 영향을 줄 수 있습니다.",
+    ),
+    (
+        "주가/수급",
+        1,
+        ["상승", "하락", "급등", "급락", "강세", "약세", "특징주", "코스피"],
+        "단기 가격 움직임 기사라서 원인 확인용으로만 보는 편이 좋습니다.",
+    ),
+]
+
+LOW_VALUE_KEYWORDS = ["상승", "하락", "급등", "급락", "강세", "약세", "특징주"]
+
 
 def fetch_google_news_rss(query: str) -> bytes:
     encoded_query = urllib.parse.quote(query)
@@ -34,6 +69,13 @@ def clean_text(value: str) -> str:
     return value
 
 
+def normalize_title(value: str) -> str:
+    value = re.sub(r"\[[^\]]+\]", "", value)
+    value = re.sub(r"\([^)]*\)", "", value)
+    value = re.sub(r"[^0-9a-zA-Z가-힣]+", "", value)
+    return value.lower()
+
+
 def source_from_item(item: ET.Element) -> str:
     source = item.find("source")
     if source is not None and source.text:
@@ -51,6 +93,26 @@ def title_without_source(title: str, source: str) -> str:
     return title
 
 
+def classify_article(title: str) -> tuple[str, int, str]:
+    haystack = title.lower()
+    for category, score, keywords, reason in CATEGORIES:
+        if any(keyword.lower() in haystack for keyword in keywords):
+            return category, score, reason
+    return "일반", 2, "효성화학 관련 언급은 있으나 직접 영향은 추가 확인이 필요합니다."
+
+
+def importance_label(score: int) -> str:
+    if score >= 5:
+        return "높음"
+    if score >= 3:
+        return "보통"
+    return "낮음"
+
+
+def is_low_value_price_article(title: str) -> bool:
+    return any(keyword in title for keyword in LOW_VALUE_KEYWORDS)
+
+
 def build_digest() -> str:
     now = datetime.now(ZoneInfo("Asia/Seoul"))
     root = ET.fromstring(fetch_google_news_rss(QUERY))
@@ -66,10 +128,12 @@ def build_digest() -> str:
         if not title or not link:
             continue
 
-        key = re.sub(r"\W+", "", title.lower())
+        key = normalize_title(title)
         if key in seen_titles:
             continue
         seen_titles.add(key)
+
+        category, score, reason = classify_article(title)
 
         selected.append(
             {
@@ -77,29 +141,62 @@ def build_digest() -> str:
                 "source": source,
                 "published": published,
                 "link": link,
+                "category": category,
+                "score": score,
+                "reason": reason,
+                "is_low_value": is_low_value_price_article(title),
             }
         )
-        if len(selected) >= MAX_ITEMS:
-            break
 
-    header = f"[효성화학 주요 기사] {now:%Y-%m-%d} 오전"
+    selected.sort(key=lambda item: (item["score"], not item["is_low_value"]), reverse=True)
+    selected = selected[:MAX_ITEMS]
+
+    header = f"[효성화학 모닝 브리핑] {now:%Y-%m-%d}"
     if not selected:
         return (
             f"{header}\n\n"
             "최근 24~48시간 내 효성화학 관련 주요 기사는 확인되지 않았습니다."
         )
 
-    lines = [header]
+    high_count = sum(1 for article in selected if article["score"] >= 5)
+    price_count = sum(1 for article in selected if article["is_low_value"])
+    categories = ", ".join(dict.fromkeys(article["category"] for article in selected))
+
+    if high_count:
+        today_core = f"중요도 높은 이슈가 {high_count}건 확인됐습니다. 우선 공시/재무/업황 영향을 확인하세요."
+    elif price_count >= len(selected) / 2:
+        today_core = "단순 주가·수급성 기사 비중이 높습니다. 제목보다 실제 원인과 공시 여부를 확인하는 편이 좋습니다."
+    else:
+        today_core = f"오늘 확인된 이슈는 {categories} 중심입니다."
+
+    lines = [
+        header,
+        "",
+        "오늘의 핵심",
+        f"- {today_core}",
+        "",
+        "중요 기사",
+    ]
     for index, article in enumerate(selected, start=1):
         lines.extend(
             [
                 "",
                 f"{index}. {article['title']}",
-                f"- 출처: {article['source']}",
-                f"- 날짜: {article['published'] or '확인 필요'}",
+                f"- 분류: {article['category']} / 중요도: {importance_label(article['score'])}",
+                f"- 왜 봐야 하나: {article['reason']}",
+                f"- 출처/날짜: {article['source']} / {article['published'] or '확인 필요'}",
                 f"- 링크: {article['link']}",
             ]
         )
+    lines.extend(
+        [
+            "",
+            "오늘 체크할 것",
+            "- 회사 공시, 신용등급, 차입/자금 조달 관련 새 소식",
+            "- 화학 업황과 주요 제품 스프레드 변화",
+            "- 단순 주가 기사라면 실제 원인이 따로 있는지",
+        ]
+    )
     return "\n".join(lines)
 
 
