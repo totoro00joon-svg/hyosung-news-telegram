@@ -101,6 +101,21 @@ def classify_article(title: str) -> tuple[str, int, str]:
     return "일반", 2, "효성화학 관련 언급은 있으나 직접 영향은 추가 확인이 필요합니다."
 
 
+def relation_to_hyosung(title: str) -> str:
+    haystack = title.lower()
+    if "효성화학" in title:
+        return "효성화학이 기사 제목에 직접 언급된 직접 관련 기사입니다."
+    if any(keyword in title for keyword in ["효성", "조현준", "효성티앤씨", "효성첨단소재", "효성중공업"]):
+        return "효성그룹 또는 계열사 이슈로, 그룹 재무·투자심리 측면에서 효성화학과 함께 볼 만합니다."
+    if any(keyword.lower() in haystack for keyword in ["화학", "프로판", "pp", "폴리프로필렌", "스프레드"]):
+        return "효성화학의 주요 사업 환경과 연결되는 화학 업황 기사입니다."
+    if any(keyword in title for keyword in ["신용등급", "차입", "채권", "부채", "자금", "유동성"]):
+        return "효성화학의 재무 안정성이나 자금 조달 여건과 연결해서 볼 필요가 있습니다."
+    if is_low_value_price_article(title):
+        return "효성화학 관련 단기 주가·수급성 언급입니다. 실제 원인이 있는지 확인용으로 보세요."
+    return "효성화학과의 연결 강도는 낮을 수 있어 원문에서 관련 대목을 확인하는 편이 좋습니다."
+
+
 def importance_label(score: int) -> str:
     if score >= 5:
         return "높음"
@@ -183,6 +198,7 @@ def build_digest() -> str:
                 "",
                 f"{index}. {article['title']}",
                 f"- 분류: {article['category']} / 중요도: {importance_label(article['score'])}",
+                f"- 효성화학 관련성: {relation_to_hyosung(article['title'])}",
                 f"- 왜 봐야 하나: {article['reason']}",
                 f"- 출처/날짜: {article['source']} / {article['published'] or '확인 필요'}",
                 f"- 링크: {article['link']}",
