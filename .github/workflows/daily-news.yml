@@ -6,12 +6,17 @@ on:
     - cron: "50 22 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   send-news:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,3 +28,13 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python scripts/send_hyosung_news.py
+
+      - name: Save briefing history
+        run: |
+          if [ -n "$(git status --porcelain data/history.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add data/history.json
+            git commit -m "Update briefing history"
+            git push
+          fi
